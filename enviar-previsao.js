@@ -33,6 +33,7 @@ function classificarDeltaT(deltaT) {
 }
 
 export default async function handler(req, res) {
+  const VERSAO_CODIGO = "v2-debug-17set";
   try {
     // 1) Previsão multi-modelo do Open-Meteo
     const forecastUrl =
@@ -42,26 +43,33 @@ export default async function handler(req, res) {
       `&hourly=temperature_2m,precipitation,wind_speed_10m` +
       `&models=${MODELS.join(",")}`;
 
-    const forecastResp = await fetch(forecastUrl);
-    const forecast = await forecastResp.json();
-
-    if (forecast.error) throw new Error(`Open-Meteo: ${forecast.reason}`);
+    let forecast;
+    try {
+      const forecastResp = await fetch(forecastUrl);
+      forecast = await forecastResp.json();
+      if (forecast.error) throw new Error(forecast.reason || "erro desconhecido");
+    } catch (e) {
+      throw new Error(`[${VERSAO_CODIGO}] ERRO NO OPEN-METEO: ${e.message}`);
+    }
 
     // 2) Dado da estação local (agora)
-    // Alguns provedores bloqueiam chamadas sem cabeçalhos de navegador — simulamos aqui
-    const stationResp = await fetch(STATION_URL, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        Referer: "https://www.wsclima.com.br/",
-        Accept: "application/json",
-      },
-    });
-    const stationData = await stationResp.json();
-
-    if (!stationData || !stationData.curr_data) {
-      throw new Error(
-        `Estação não retornou dados válidos. Status: ${stationResp.status}. Resposta: ${JSON.stringify(stationData).slice(0, 300)}`
-      );
+    let stationData;
+    try {
+      const stationResp = await fetch(STATION_URL, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          Referer: "https://www.wsclima.com.br/",
+          Accept: "application/json",
+        },
+      });
+      stationData = await stationResp.json();
+      if (!stationData || !stationData.curr_data) {
+        throw new Error(
+          `status ${stationResp.status}, resposta: ${JSON.stringify(stationData).slice(0, 300)}`
+        );
+      }
+    } catch (e) {
+      throw new Error(`[${VERSAO_CODIGO}] ERRO NA ESTAÇÃO: ${e.message}`);
     }
 
     const curr = stationData.curr_data;
@@ -244,6 +252,6 @@ export default async function handler(req, res) {
       resend: envioJson,
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message.includes("v2-debug") ? err.message : `[${VERSAO_CODIGO}] ${err.message}` });
   }
 }
