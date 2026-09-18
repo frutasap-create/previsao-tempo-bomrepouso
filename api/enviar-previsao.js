@@ -9,7 +9,9 @@ const STATION_URL = "https://api.wsclima.com.br/v1/stations/1254/detail";
 const MODELS = ["icon_seamless", "gfs_seamless", "ecmwf_ifs025", "meteofrance_seamless"];
 
 function media(arr) {
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
+  const validos = arr.filter((v) => v !== null && v !== undefined);
+  if (validos.length === 0) return null;
+  return validos.reduce((a, b) => a + b, 0) / validos.length;
 }
 
 // Temperatura de bulbo úmido (fórmula de Stull, 2011) — usada pra calcular o Delta T de pulverização
@@ -38,7 +40,7 @@ export default async function handler(req, res) {
     // 1) Previsão multi-modelo do Open-Meteo
     const forecastUrl =
       `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-      `&timezone=America%2FSao_Paulo&forecast_days=3` +
+      `&timezone=America%2FSao_Paulo&forecast_days=16` +
       `&daily=temperature_2m_min,temperature_2m_max,precipitation_sum,precipitation_probability_max,wind_speed_10m_max` +
       `&hourly=temperature_2m,precipitation,wind_speed_10m` +
       `&models=${MODELS.join(",")}`;
@@ -146,14 +148,27 @@ export default async function handler(req, res) {
       .map(([ini, fim]) => `${formatarHora(ini)} até ${formatarHora(fim)}`)
       .slice(0, 4);
 
-    // 5) Chuva prevista próximos 3 dias (spread entre modelos)
+    // 5) Chuva prevista — até 16 dias (máximo real; cada modelo tem seu próprio alcance)
     const diasChuva = forecast.daily.time.map((data, i) => {
-      const valores = MODELS.map((m) => forecast.daily[`precipitation_sum_${m}`][i]);
+      const valoresBrutos = MODELS.map((m) => forecast.daily[`precipitation_sum_${m}`][i]);
+      const valores = valoresBrutos.filter((v) => v !== null && v !== undefined);
+      const nModelos = valores.length;
+
+      let confianca;
+      if (nModelos >= 4) confianca = "Alta (4 modelos)";
+      else if (nModelos >= 2) confianca = `Média (${nModelos} modelos)`;
+      else if (nModelos === 1) confianca = "Baixa (1 modelo — GFS)";
+      else confianca = "Sem dado";
+
+      if (nModelos === 0) {
+        return { data, min: "-", media: "-", max: "-", confianca };
+      }
       return {
         data,
         min: Math.min(...valores).toFixed(1),
         media: media(valores).toFixed(1),
         max: Math.max(...valores).toFixed(1),
+        confianca,
       };
     });
 
@@ -198,21 +213,26 @@ export default async function handler(req, res) {
       }
       <p style="font-size:13px;color:#666;">Critério: vento médio abaixo de 15 km/h e sem chuva prevista nas 4h seguintes.</p>
 
-      <h3>🌧️ Chuva prevista (próximos 3 dias)</h3>
+      <h3>🌧️ Chuva prevista (próximos 16 dias)</h3>
       <table style="border-collapse:collapse;">
         <tr style="text-align:left;border-bottom:1px solid #ccc;">
           <th style="padding:4px 12px 4px 0;">Dia</th>
           <th style="padding:4px 12px;">Mín (mm)</th>
           <th style="padding:4px 12px;">Média (mm)</th>
           <th style="padding:4px 12px;">Máx (mm)</th>
+          <th style="padding:4px 12px;">Confiança</th>
         </tr>
         ${diasChuva
           .map(
             (d) =>
-              `<tr><td style="padding:4px 12px 4px 0;">${d.data}</td><td style="padding:4px 12px;">${d.min}</td><td style="padding:4px 12px;">${d.media}</td><td style="padding:4px 12px;">${d.max}</td></tr>`
+              `<tr><td style="padding:4px 12px 4px 0;">${d.data}</td><td style="padding:4px 12px;">${d.min}</td><td style="padding:4px 12px;">${d.media}</td><td style="padding:4px 12px;">${d.max}</td><td style="padding:4px 12px;font-size:12px;color:#666;">${d.confianca}</td></tr>`
           )
           .join("")}
       </table>
+      <p style="font-size:12px;color:#999;">
+        Confiança cai conforme o prazo aumenta — poucos dias à frente, os 4 modelos concordam;
+        do dia 8 ao 16, só o GFS (EUA) alcança essa distância, então trate como indicativo, não certeza.
+      </p>
 
       <p style="font-size:12px;color:#999;margin-top:20px;">
         Fontes: Open-Meteo (modelos ${MODELS.join(", ")}) + estação local wsclima.com.br/estacao/1254.
