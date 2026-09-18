@@ -1,14 +1,15 @@
 # Previsão Bom Repouso
 
-Sistema diário de apoio à decisão agrícola pra lavoura de morango em Bom Repouso, MG.
-Combina 4 modelos meteorológicos fisicamente diferentes (ICON/Alemanha, GFS/EUA, ECMWF/Europa,
-Météo-France) via Open-Meteo com dados em tempo real da estação local mais próxima
-(wsclima.com.br, ~6km da lavoura). Envia por email todo dia às 5:30 (Brasília):
+Envia de segunda a sexta às 6h (horário de Brasília) um boletim combinando 4 modelos meteorológicos
+fisicamente diferentes (ICON/Alemanha, GFS/EUA, ECMWF/Europa, Météo-France) via Open-Meteo com dados
+em tempo real da estação local mais próxima (wsclima.com.br, ~6km da lavoura):
 
-- Leitura atual da estação local (temperatura, umidade, vento, chuva)
+- Leitura atual da estação local (temperatura, umidade, vento, chuva, ETo, risco de incêndio)
+- Delta T de pulverização agora (calculado a partir da leitura da estação)
 - Risco de geada pra amanhã, com a faixa de incerteza entre os modelos
 - Janela sugerida de pulverização nas próximas 48h (vento baixo + sem chuva)
-- Previsão de chuva pros próximos 3 dias (mín/média/máx entre os modelos)
+- Previsão de chuva pros próximos 16 dias (o máximo real — GFS é o único modelo que alcança essa
+  distância), com nível de confiança marcado por trecho (cai bastante depois do dia 7-8)
 
 ## O que ainda NÃO faz (limitações conhecidas)
 
@@ -35,4 +36,4 @@ Météo-France) via Open-Meteo com dados em tempo real da estação local mais p
 
 4. **Testar**: abrir a URL do projeto e clicar em "Testar envio agora".
 
-5. **Cron**: já configurado em `vercel.json` pra `30 8 * * *` (UTC) = 5:30 Brasília.
+5. **Cron**: já configurado em `vercel.json` pra `0 9 * * 1-5` (UTC) = 6h Brasília, segunda a sexta.
