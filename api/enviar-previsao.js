@@ -8,6 +8,15 @@ const STATION_URL = "https://api.wsclima.com.br/v1/stations/1254/detail";
 // Modelos fisicamente diferentes (não apenas "sites" diferentes que usam o mesmo modelo por baixo)
 const MODELS = ["icon_seamless", "gfs_seamless", "ecmwf_ifs025", "meteofrance_seamless"];
 
+// RSS de notícias (Google News, sem custo, sem chave de API)
+const RSS_FEEDS = {
+  agro: "https://news.google.com/rss/search?q=agroneg%C3%B3cio&hl=pt-BR&gl=BR&ceid=BR:pt-BR",
+  economia: "https://news.google.com/rss/search?q=economia&hl=pt-BR&gl=BR&ceid=BR:pt-BR",
+  // CNN Brasil não expõe RSS próprio publicamente — contornamos usando o filtro
+  // "site:" do Google News, que devolve as manchetes recentes desse domínio específico.
+  cnn: "https://news.google.com/rss/search?q=site:cnnbrasil.com.br&hl=pt-BR&gl=BR&ceid=BR:pt-BR",
+};
+
 function media(arr) {
   const validos = arr.filter((v) => v !== null && v !== undefined);
   if (validos.length === 0) return null;
@@ -34,8 +43,49 @@ function classificarDeltaT(deltaT) {
   return { status: "❌ Não recomendado", motivo: "Delta T muito alto — risco de evaporação/deriva" };
 }
 
+// Decodifica as entidades HTML mais comuns que vêm no RSS (títulos de notícia)
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+// Escapa texto pra ser inserido com segurança dentro de HTML do Telegram (parse_mode: HTML)
+function escapeHtmlTelegram(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Extrai título + link de cada <item> de um feed RSS 2.0, sem depender de biblioteca externa
+async function buscarManchetes(url, limite = 3) {
+  try {
+    const resp = await fetch(url);
+    const xml = await resp.text();
+    const itens = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, limite);
+    return itens.map((m) => {
+      const bloco = m[1];
+      const tituloMatch = bloco.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+      const linkMatch = bloco.match(/<link>([\s\S]*?)<\/link>/);
+      const titulo = tituloMatch ? decodeHtmlEntities(tituloMatch[1].trim()) : "Sem título";
+      const link = linkMatch ? linkMatch[1].trim() : "";
+      return { titulo, link };
+    });
+  } catch (e) {
+    return []; // se o RSS falhar, a mensagem sai sem essa seção — não quebra o resto
+  }
+}
+
+function formatarManchetesTelegram(lista) {
+  if (lista.length === 0) return "Sem manchetes disponíveis agora.";
+  return lista
+    .map((m) => `• <a href="${escapeHtmlTelegram(m.link)}">${escapeHtmlTelegram(m.titulo)}</a>`)
+    .join("\n");
+}
+
 export default async function handler(req, res) {
-  const VERSAO_CODIGO = "v2-debug-17set";
+  const VERSAO_CODIGO = "v3-telegram-rss";
   try {
     // 1) Previsão multi-modelo do Open-Meteo
     const forecastUrl =
@@ -242,6 +292,51 @@ export default async function handler(req, res) {
 
     const textoSimples = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
+    // 7) Buscar manchetes de notícia (RSS gratuito, sem IA, sem custo) e enviar pelo Telegram
+    // Isso roda em paralelo e é isolado num try/catch próprio: se falhar, não afeta o email.
+    let telegramResult = null;
+    try {
+      const [manchetesAgro, manchetesEconomia, manchetesCnn] = await Promise.all([
+        buscarManchetes(RSS_FEEDS.agro),
+        buscarManchetes(RSS_FEEDS.economia),
+        buscarManchetes(RSS_FEEDS.cnn),
+      ]);
+
+      const telegramMsg =
+        `🌤️ <b>Boletim do dia — Bom Repouso</b>\n` +
+        `${dataGeracao}\n\n` +
+        `📍 Agora: ${curr.temp}°C, umidade ${curr.humidity}%, vento ${curr.wind_speed} km/h\n` +
+        `Mín/Máx hoje: ${minimaHoje}°C / ${maximaHoje}°C\n` +
+        `Chuva acumulada hoje: ${curr.precip_total} mm\n\n` +
+        `❄️ ${riscoGeada}\n` +
+        `💧 Pulverização agora: ${classificacaoDeltaT.status}\n` +
+        `${blocosPulverizacao.length > 0 ? `Próxima janela boa: ${blocosPulverizacao[0]}` : "Sem janela clara nas próximas 48h"}\n\n` +
+        `📰 <b>Agronegócio</b>\n${formatarManchetesTelegram(manchetesAgro)}\n\n` +
+        `💰 <b>Economia</b>\n${formatarManchetesTelegram(manchetesEconomia)}\n\n` +
+        `📺 <b>CNN Brasil</b>\n${formatarManchetesTelegram(manchetesCnn)}`;
+
+      const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+      const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+      const telegramResp = await fetch(
+        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: TELEGRAM_CHAT_ID,
+            text: telegramMsg,
+            parse_mode: "HTML",
+            disable_web_page_preview: true,
+          }),
+        }
+      );
+      telegramResult = await telegramResp.json();
+    } catch (e) {
+      telegramResult = { ok: false, error: e.message };
+    }
+
+    // 8) Enviar o email (Resend) — inalterado
     const RESEND_API_KEY = process.env.RESEND_API_KEY;
     const RESEND_TO_EMAIL = process.env.RESEND_TO_EMAIL;
 
@@ -270,8 +365,9 @@ export default async function handler(req, res) {
       janelasPulverizacao: blocosPulverizacao,
       chuvaPrevisao: diasChuva,
       resend: envioJson,
+      telegram: telegramResult,
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message.includes("v2-debug") ? err.message : `[${VERSAO_CODIGO}] ${err.message}` });
+    return res.status(500).json({ error: err.message.includes("v3-telegram") ? err.message : `[${VERSAO_CODIGO}] ${err.message}` });
   }
 }
