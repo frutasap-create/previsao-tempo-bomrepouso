@@ -84,6 +84,20 @@ function formatarManchetesTelegram(lista) {
     .join("\n");
 }
 
+// Formata a lista de chuva prevista (16 dias) de forma compacta pro Telegram
+function formatarChuvaTelegram(diasChuva) {
+  return diasChuva
+    .map((d) => {
+      const dataFmt = new Date(d.data + "T00:00:00").toLocaleDateString("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit",
+      });
+      return `${dataFmt}: ${d.media}mm (${d.confianca.split(" ")[0]})`;
+    })
+    .join("\n");
+}
+
 export default async function handler(req, res) {
   const VERSAO_CODIGO = "v3-telegram-rss";
   try {
@@ -311,6 +325,7 @@ export default async function handler(req, res) {
         `❄️ ${riscoGeada}\n` +
         `💧 Pulverização agora: ${classificacaoDeltaT.status}\n` +
         `${blocosPulverizacao.length > 0 ? `Próxima janela boa: ${blocosPulverizacao[0]}` : "Sem janela clara nas próximas 48h"}\n\n` +
+        `🌧️ <b>Chuva prevista (16 dias)</b>\n${formatarChuvaTelegram(diasChuva)}\n\n` +
         `📰 <b>Agronegócio</b>\n${formatarManchetesTelegram(manchetesAgro)}\n\n` +
         `💰 <b>Economia</b>\n${formatarManchetesTelegram(manchetesEconomia)}\n\n` +
         `📺 <b>CNN Brasil</b>\n${formatarManchetesTelegram(manchetesCnn)}`;
