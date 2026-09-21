@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/enviar-previsao",
-      "schedule": "0 9 * * 1-5"
+      "schedule": "0 9 * * *"
     }
   ]
 }
